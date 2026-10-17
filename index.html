@@ -285,7 +285,7 @@ textarea#json{width:100%;min-width:0;height:148px;resize:vertical;font:400 11.5p
   <section class="sheet" id="sheetHelp" role="dialog" aria-label="Горячие клавиши">
     <button class="ib close" data-close aria-label="Закрыть">✕</button>
     <h2>Как водить по доске</h2>
-    <p class="lede">Колесо приближает и отдаляет. Чтобы подвинуть доску — Shift с колесом, зажатый пробел или два пальца. Двойной клик по пустому месту ставит стикер, по объекту — правит текст. У пера, линии и стрелки цвет и толщину видно слева, ещё до того как начал рисовать.</p>
+    <p class="lede">Колесо приближает и отдаляет. Чтобы подвинуть доску — зажмите правую кнопку мыши и тяните; так же работают зажатый пробел, Shift с колесом и два пальца. Правый клик без тяги открывает меню. Двойной клик по пустому месту ставит стикер, по объекту — правит текст. У пера, линии и стрелки цвет и толщину видно слева, ещё до того как начал рисовать.</p>
     <div class="keys" id="keysList"></div>
   </section>
 
@@ -1069,13 +1069,14 @@ cv.addEventListener('pointerdown', e => {
   const r = cv.getBoundingClientRect();
   const sx = e.clientX - r.left, sy = e.clientY - r.top;
   const [wx, wy] = toWorld(sx, sy);
-  const mid = e.button === 1;
+  const mid = e.button === 1, rmb = e.button === 2;
 
-  if (mid || spaceDown || S.tool === 'hand'){
-    act = {kind:'pan', sx, sy, cx:S.cam.x, cy:S.cam.y};
+  // Правая кнопка тянет доску. Если её отпустили, не сдвинув, — это обычный
+  // правый клик, и на отпускании откроется контекстное меню (см. endPointer).
+  if (mid || rmb || spaceDown || S.tool === 'hand'){
+    act = {kind:'pan', sx, sy, cx:S.cam.x, cy:S.cam.y, rmb, moved:false};
     cv.style.cursor = 'grabbing'; return;
   }
-  if (e.button === 2) return;
 
   const T = S.tool;
 
@@ -1170,7 +1171,10 @@ cv.addEventListener('pointermove', e => {
   switch (act.kind){
     case 'pan':
       S.cam.x = act.cx + (sx - act.sx); S.cam.y = act.cy + (sy - act.sy);
-      dirty = true; break;
+      if (Math.abs(sx - act.sx) + Math.abs(sy - act.sy) > 4) act.moved = true;
+      dirty = true;
+      if (editing) placeEditor(byId(editing));
+      break;
     case 'marquee':
       act.x2 = wx; act.y2 = wy;
       { const bx = Math.min(act.x1,act.x2), by = Math.min(act.y1,act.y2);
@@ -1232,6 +1236,10 @@ function endPointer(e){
   cv.style.cursor = cursorFor(null, hover);
   if (!a) return;
 
+  if (a.kind === 'pan'){
+    if (a.rmb && !a.moved) openMenuAt(a.sx, a.sy);   // правый клик без тяги
+    return;
+  }
   if (a.kind === 'create'){
     const T = a.tool, p = a.preview;
     let it;
@@ -1394,15 +1402,16 @@ cv.addEventListener('wheel', e => {
 
 /* ========================= контекстное меню ========================= */
 const menu = $('#menu');
-cv.addEventListener('contextmenu', e => {
-  e.preventDefault();
-  const r = cv.getBoundingClientRect();
-  const [wx, wy] = toWorld(e.clientX - r.left, e.clientY - r.top);
+// Своё меню открывает endPointer, когда правую кнопку отпустили без тяги,
+// поэтому здесь только глушим системное меню браузера.
+cv.addEventListener('contextmenu', e => e.preventDefault());
+function openMenuAt(sx, sy){
+  const [wx, wy] = toWorld(sx, sy);
   const it = hitAt(wx, wy);
   if (it && !S.sel.has(it.id)){ S.sel = new Set([it.id]); syncCtxbar(); dirty = true; }
   if (!it && !S.sel.size){ S.sel.clear(); syncCtxbar(); }
-  showMenu(e.clientX - r.left, e.clientY - r.top, {wx, wy});
-});
+  showMenu(sx, sy, {wx, wy});
+}
 function showMenu(x, y, ctxData){
   const has = S.sel.size > 0, one = selected()[0];
   const rows = [];
@@ -2038,7 +2047,9 @@ const KEYS = [
   ['Выделение / рука','V / H'], ['Стикер','N'], ['Текст','T'],
   ['Фигуры','R O D G'], ['Стрелка / линия','A / L'], ['Перо','P'],
   ['Рамка / картинка','F / I'], ['Ластик','E'],
-  ['Зум','колесо · щипок · Ctrl+колесо'], ['Панорама','Shift+колесо · пробел+тяга · 2 пальца'],
+  ['Зум','колесо · щипок · Ctrl+колесо'],
+  ['Панорама','правая кнопка + тяга'], ['Панорама иначе','пробел · Shift+колесо · 2 пальца'],
+  ['Контекстное меню','правый клик без тяги'],
   ['Показать всё','1'], ['Зум к выделению','2'], ['Масштаб 100%','0'],
   ['Отменить / вернуть','Ctrl+Z / Ctrl+Shift+Z'],
   ['Дублировать','Ctrl+D'], ['Копировать / вставить','Ctrl+C / Ctrl+V'],
