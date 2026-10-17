@@ -230,6 +230,7 @@ textarea#json{width:100%;min-width:0;height:148px;resize:vertical;font:400 11.5p
     <div class="spacer"></div>
     <div class="panel bar">
       <button class="txtb" id="tmplBtn"><span class="lbl">Шаблоны</span></button>
+      <button class="ib" id="bgBtn" title="Фон доски: точки или клетка" aria-label="Фон доски"></button>
       <button class="ib" id="themeBtn" title="Светлая / тёмная тема" aria-label="Переключить тему"></button>
       <button class="ib" id="helpBtn" title="Горячие клавиши (?)" aria-label="Горячие клавиши"></button>
       <button class="txtb primary" id="shareBtn">Экспорт</button>
@@ -318,6 +319,8 @@ const ICON = {
   fit:      I('<path d="M4 9V5.5A1.5 1.5 0 015.5 4H9M15 4h3.5A1.5 1.5 0 0120 5.5V9M20 15v3.5A1.5 1.5 0 0118.5 20H15M9 20H5.5A1.5 1.5 0 014 18.5V15"/>'),
   help:     I('<circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.3A2.5 2.5 0 0114.5 10c0 1.7-2.5 2-2.5 3.6M12 17h.01"/>'),
   theme:    I('<path d="M12 3.5a8.5 8.5 0 108 11.3A6.6 6.6 0 0112 3.5z"/>'),
+  bgDots:   I('<circle cx="7" cy="7" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="7" r="1.5" fill="currentColor" stroke="none"/><circle cx="17" cy="7" r="1.5" fill="currentColor" stroke="none"/><circle cx="7" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="17" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="7" cy="17" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="17" r="1.5" fill="currentColor" stroke="none"/><circle cx="17" cy="17" r="1.5" fill="currentColor" stroke="none"/>'),
+  bgGrid:   I('<path d="M3.5 9.5h17M3.5 14.5h17M9.5 3.5v17M14.5 3.5v17"/>', 1.4),
   copy:     I('<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 5.5A2 2 0 0013.6 4H6.5a2 2 0 00-2 2v7.2c0 .9.6 1.6 1.5 1.8"/>'),
   dup:      I('<rect x="3.5" y="3.5" width="12" height="12" rx="2"/><path d="M8.5 20.5h10a2 2 0 002-2v-10"/>'),
   front:    I('<path d="M12 3.5l8 4.5-8 4.5-8-4.5z"/><path d="M20 12.5L12 17 4 12.5M20 16.5L12 21 4 16.5"/>'),
@@ -346,6 +349,7 @@ const S = {
   sel: new Set(),
   tool: 'select',
   name: 'Спринт 12 — планирование',
+  bg: 'dots',                 // 'dots' — точки, 'grid' — клетка как в тетради
   style: {
     sticky:'#ffe36e', fill:'paper', stroke:'ink', strokeW:2,
     penColor:'ink', penW:3, textColor:'ink', fontSize:16, bold:false, align:'center',
@@ -525,6 +529,18 @@ function drawGrid(W,H){
   while (step*z > 90) step /= 2;
   const sz = step*z; if (sz < 7) return;
   const ox = S.cam.x % sz, oy = S.cam.y % sz;
+  if (S.bg === 'grid'){                       // клетка, как в тетради
+    ctx.save();
+    ctx.strokeStyle = TH.dot; ctx.lineWidth = 1; ctx.beginPath();
+    for (let x = ox - sz; x < W + sz; x += sz){
+      const px = Math.round(x) + .5; ctx.moveTo(px, 0); ctx.lineTo(px, H);
+    }
+    for (let y = oy - sz; y < H + sz; y += sz){
+      const py = Math.round(y) + .5; ctx.moveTo(0, py); ctx.lineTo(W, py);
+    }
+    ctx.stroke(); ctx.restore();
+    return;
+  }
   ctx.fillStyle = TH.dot;
   const r = clamp(z*1.1, .7, 1.6);
   for (let x = ox - sz; x < W + sz; x += sz)
@@ -846,7 +862,7 @@ let saveT = 0;
 function save(){
   clearTimeout(saveT);
   saveT = setTimeout(() => {
-    try { localStorage.setItem(KEY, JSON.stringify({name:S.name, cam:S.cam,
+    try { localStorage.setItem(KEY, JSON.stringify({name:S.name, cam:S.cam, bg:S.bg,
       items:S.items.map(it => { const c = {...it}; delete c.img; return c; })})); } catch(e){}
   }, 350);
 }
@@ -857,6 +873,7 @@ function load(){
     if (!d || !Array.isArray(d.items)) return false;
     S.items = d.items.map(hydrate);
     if (d.cam) S.cam = d.cam;
+    if (d.bg) S.bg = d.bg;
     if (d.name){ S.name = d.name; $('#boardName').value = d.name; }
     return true;
   } catch(e){ return false; }
@@ -1945,7 +1962,7 @@ function closeSheets(){
   $('#scrim').classList.remove('show');
 }
 function exportJson(){
-  return JSON.stringify({app:'vatman', v:1, name:S.name,
+  return JSON.stringify({app:'vatman', v:1, name:S.name, bg:S.bg,
     items:S.items.map(it => { const c = {...it}; delete c.img; return c; })}, null, 1);
 }
 function importJson(text){
@@ -1954,6 +1971,7 @@ function importJson(text){
     if (!d || !Array.isArray(d.items)) return false;
     S.items = d.items.map(hydrate);
     if (d.name){ S.name = d.name; $('#boardName').value = d.name; }
+    if (d.bg){ S.bg = d.bg; syncBgBtn(); }
     S.sel.clear(); wrapCache.clear(); pushHist(); zoomFit(); syncCtxbar();
     toast('Доска загружена');
     return true;
@@ -2010,6 +2028,16 @@ $('#zoomFit').innerHTML = ICON.fit;
 $('#helpBtn').innerHTML = ICON.help;
 $('#tmplBtn').insertAdjacentHTML('afterbegin', ICON.layout);
 $('#themeBtn').innerHTML = ICON.theme;
+function syncBgBtn(){
+  const grid = S.bg === 'grid';
+  $('#bgBtn').innerHTML = grid ? ICON.bgGrid : ICON.bgDots;
+  $('#bgBtn').title = grid ? 'Фон: клетка — нажмите, чтобы вернуть точки' : 'Фон: точки — нажмите, чтобы включить клетку';
+}
+$('#bgBtn').onclick = () => {
+  S.bg = S.bg === 'grid' ? 'dots' : 'grid';
+  syncBgBtn(); dirty = true; save();
+  toast(S.bg === 'grid' ? 'Фон: клетка' : 'Фон: точки');
+};
 $('#undoBtn').onclick = undo;
 $('#redoBtn').onclick = redo;
 $('#zoomOut').onclick = () => zoomAt(cv.clientWidth/2, cv.clientHeight/2, .8);
@@ -2064,6 +2092,7 @@ $('#keysList').innerHTML = KEYS.map(([a,b]) => `<div><span>${a}</span><kbd>${b}<
 function start(){
   readTheme(); buildTools(); buildTmplList();
   const restored = load();
+  syncBgBtn();
   if (!restored) S.items = sampleBoard();
   resize();
   if (!S.items.length) S.cam = {x:cv.clientWidth/2, y:cv.clientHeight/2, z:1};
