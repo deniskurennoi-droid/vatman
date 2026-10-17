@@ -115,6 +115,14 @@ svg{display:block;flex:none}
 .step{display:flex;align-items:center;gap:1px}
 .step span{min-width:30px;text-align:center;font-size:12.5px;font-weight:600;font-variant-numeric:tabular-nums}
 
+/* ——— настройки активного инструмента (перо, линия, стрелка) ——— */
+#toolopts{position:absolute;left:calc(max(14px, env(safe-area-inset-left,0px)) + 62px);
+  top:50%;transform:translateY(-50%);display:none;align-items:center;gap:3px;padding:5px;z-index:7}
+#toolopts.show{display:flex}
+#toolopts .cap{font-size:12px;font-weight:600;color:var(--muted);padding:0 6px 0 4px;white-space:nowrap}
+.wpre{width:30px;height:26px;display:grid;place-items:center;flex:none}
+.wpre i{display:block;border-radius:50%;background:currentColor}
+
 /* ——— контекстное меню ——— */
 #menu{position:absolute;z-index:10;display:none;padding:5px;min-width:206px}
 #menu.show{display:block}
@@ -179,6 +187,9 @@ textarea#json{width:100%;min-width:0;height:148px;resize:vertical;font:400 11.5p
   #tools .sep{width:1px;height:auto;margin:6px 4px}
   .tip{display:none}
   #zoombar{bottom:max(68px, calc(env(safe-area-inset-bottom,0px) + 68px))}
+  #toolopts{left:50%;top:auto;bottom:max(118px, calc(env(safe-area-inset-bottom,0px) + 118px));
+    transform:translateX(-50%);max-width:calc(100vw - 24px);flex-wrap:wrap;justify-content:center}
+  #toolopts .cap{display:none}
   #boardName{width:12ch;min-width:80px}
   .brand b{display:none}
 }
@@ -236,6 +247,7 @@ textarea#json{width:100%;min-width:0;height:148px;resize:vertical;font:400 11.5p
   </div>
 
   <div id="minimap" class="panel"><canvas></canvas></div>
+  <div id="toolopts" class="panel" role="toolbar" aria-label="Настройки инструмента"></div>
   <div id="ctxbar" class="panel" role="toolbar" aria-label="Свойства выделения"></div>
   <div id="menu" class="panel" role="menu"></div>
 
@@ -273,7 +285,7 @@ textarea#json{width:100%;min-width:0;height:148px;resize:vertical;font:400 11.5p
   <section class="sheet" id="sheetHelp" role="dialog" aria-label="Горячие клавиши">
     <button class="ib close" data-close aria-label="Закрыть">✕</button>
     <h2>Как водить по доске</h2>
-    <p class="lede">Колесо или два пальца — панорама, Ctrl с колесом или щипок — зум. Пробел зажат — рука. Двойной клик по пустому месту ставит стикер, по объекту — правит текст.</p>
+    <p class="lede">Колесо приближает и отдаляет. Чтобы подвинуть доску — Shift с колесом, зажатый пробел или два пальца. Двойной клик по пустому месту ставит стикер, по объекту — правит текст. У пера, линии и стрелки цвет и толщину видно слева, ещё до того как начал рисовать.</p>
     <div class="keys" id="keysList"></div>
   </section>
 
@@ -1362,19 +1374,22 @@ cv.addEventListener('dblclick', e => {
   }
 });
 
+// Колесо приближает и отдаляет — как в картах. Панорама осталась на Shift+колесе,
+// пробеле с тягой, руке (H), среднем колесе и двух пальцах.
 cv.addEventListener('wheel', e => {
   e.preventDefault();
   const r = cv.getBoundingClientRect();
   const sx = e.clientX - r.left, sy = e.clientY - r.top;
-  if (e.ctrlKey || e.metaKey){
-    zoomAt(sx, sy, Math.exp(-e.deltaY*0.0025));
-  } else {
-    const k = e.deltaMode === 1 ? 18 : 1;
-    if (e.shiftKey && !e.deltaX){ S.cam.x -= e.deltaY*k; }
-    else { S.cam.x -= e.deltaX*k; S.cam.y -= e.deltaY*k; }
+  // deltaMode: 0 — пиксели, 1 — строки, 2 — страницы
+  const k = e.deltaMode === 1 ? 18 : e.deltaMode === 2 ? cv.clientHeight : 1;
+  const dx = e.deltaX*k, dy = e.deltaY*k;
+  if (e.shiftKey && !(e.ctrlKey || e.metaKey)){
+    S.cam.x -= dx; S.cam.y -= dy;
     dirty = true;
     if (editing) placeEditor(byId(editing));
+    return;
   }
+  zoomAt(sx, sy, Math.exp(-clamp(dy, -400, 400)*0.0025));
 }, {passive:false});
 
 /* ========================= контекстное меню ========================= */
@@ -1565,6 +1580,7 @@ function setTool(id, quiet){
   for (const b of document.querySelectorAll('#tools button'))
     b.setAttribute('aria-pressed', String(b.dataset.tool === id));
   if (!['select','hand','eraser'].includes(id)) { S.sel.clear(); syncCtxbar(); }
+  syncToolOpts();
   cv.style.cursor = cursorFor(null, null);
   dirty = true;
 }
@@ -1576,6 +1592,32 @@ function pickImage(){
 }
 
 /* ========================= контекстная панель ========================= */
+// Кирпичики обеих панелей — контекстной и настроек инструмента.
+function swatchEl(c, on, onPick){
+  const b = document.createElement('button');
+  b.className = 'sw' + (on ? ' on' : '');
+  b.title = c === 'none' ? 'Без заливки' : c === 'ink' ? 'Цвет текста' : c;
+  b.style.background = c === 'none' ? 'transparent' : col(c);
+  if (c === 'none') b.style.backgroundImage = 'linear-gradient(135deg, transparent 44%, #e0394f 44%, #e0394f 56%, transparent 56%)';
+  b.onclick = onPick;
+  return b;
+}
+const rowEl = kids => { const d = document.createElement('div'); d.className = 'swrow'; kids.forEach(k => d.append(k)); return d; };
+const sepEl = () => { const d = document.createElement('div'); d.className = 'vsep'; return d; };
+function ibEl(icon, title, fn, on){
+  const b = document.createElement('button'); b.className = 'ib' + (on ? ' on' : '');
+  b.title = title; b.setAttribute('aria-label', title); b.innerHTML = ICON[icon] || icon;
+  b.onclick = () => { fn(); };
+  return b;
+}
+function stepEl(label, get, set){
+  const d = document.createElement('div'); d.className = 'step';
+  const minus = ibEl('minus', label + ' меньше', () => { set(-1); });
+  const val = document.createElement('span'); val.textContent = get();
+  const plus = ibEl('plus', label + ' больше', () => { set(1); });
+  d.append(minus, val, plus); return d;
+}
+
 const ctxbar = $('#ctxbar');
 function syncCtxbar(){
   const sel = selected();
@@ -1584,30 +1626,8 @@ function syncCtxbar(){
   const one = sel.length === 1 ? sel[0] : null;
   const frag = document.createDocumentFragment();
 
-  const mkSw = (c, on, fn) => {
-    const b = document.createElement('button');
-    b.className = 'sw' + (on ? ' on' : '');
-    b.title = c === 'none' ? 'Без заливки' : c === 'ink' ? 'Цвет текста' : c;
-    b.style.background = c === 'none' ? 'transparent' : col(c);
-    if (c === 'none') b.style.backgroundImage = 'linear-gradient(135deg, transparent 44%, #e0394f 44%, #e0394f 56%, transparent 56%)';
-    b.onclick = () => { fn(); pushHist(); dirty = true; syncCtxbar(); };
-    return b;
-  };
-  const row = kids => { const d = document.createElement('div'); d.className = 'swrow'; kids.forEach(k => d.append(k)); return d; };
-  const sep = () => { const d = document.createElement('div'); d.className = 'vsep'; return d; };
-  const ib = (icon, title, fn, on) => {
-    const b = document.createElement('button'); b.className = 'ib' + (on ? ' on' : '');
-    b.title = title; b.setAttribute('aria-label', title); b.innerHTML = ICON[icon] || icon;
-    b.onclick = () => { fn(); };
-    return b;
-  };
-  const step = (label, get, set) => {
-    const d = document.createElement('div'); d.className = 'step';
-    const minus = ib('minus', label + ' меньше', () => { set(-1); });
-    const val = document.createElement('span'); val.textContent = get();
-    const plus = ib('plus', label + ' больше', () => { set(1); });
-    d.append(minus, val, plus); return d;
-  };
+  const mkSw = (c, on, fn) => swatchEl(c, on, () => { fn(); pushHist(); dirty = true; syncCtxbar(); });
+  const row = rowEl, sep = sepEl, ib = ibEl, step = stepEl;
 
   if (types.has('sticky')){
     frag.append(row(STICKY_COLORS.map(c => mkSw(c, one && one.color === c,
@@ -1678,6 +1698,44 @@ function positionCtxbar(){
   left = clamp(left, 8, Math.max(8, cv.clientWidth - r.width - 8));
   top = clamp(top, 8, Math.max(8, cv.clientHeight - r.height - 8));
   ctxbar.style.left = left + 'px'; ctxbar.style.top = top + 'px';
+}
+
+/* ——— настройки инструмента: цвет и толщина до того, как начал рисовать ——— */
+const toolopts = $('#toolopts');
+function syncToolOpts(){
+  const T = S.tool, isPen = T === 'pen', isLine = T === 'line' || T === 'arrow';
+  if (!isPen && !isLine){ toolopts.classList.remove('show'); toolopts.innerHTML = ''; return; }
+  const cur = isPen ? S.style.penColor : S.style.stroke;
+  const wid = isPen ? S.style.penW : S.style.strokeW;
+  const frag = document.createDocumentFragment();
+
+  const cap = document.createElement('span');
+  cap.className = 'cap';
+  cap.textContent = isPen ? 'Перо' : T === 'arrow' ? 'Стрелка' : 'Линия';
+  frag.append(cap);
+
+  frag.append(rowEl(INK_COLORS.map(c => swatchEl(c, c === cur, () => {
+    if (isPen) S.style.penColor = c; else S.style.stroke = c;
+    syncToolOpts();
+  }))));
+  frag.append(sepEl());
+  frag.append(stepEl('Толщина', () => wid, d => {
+    const now = isPen ? S.style.penW : S.style.strokeW;   // панель перестраивается после клика,
+    const v = clamp(now + d, 1, 30);                      // поэтому значение берём свежее, а не из замыкания
+    if (isPen) S.style.penW = v; else S.style.strokeW = v;
+    syncToolOpts();
+  }));
+
+  const pre = document.createElement('div');          // кружок показывает цвет и толщину
+  pre.className = 'wpre'; pre.style.color = col(cur);
+  pre.title = 'Так будет выглядеть линия';
+  const dot = document.createElement('i');
+  const size = clamp(wid, 2, 22);
+  dot.style.width = size + 'px'; dot.style.height = size + 'px';
+  pre.append(dot); frag.append(pre);
+
+  toolopts.innerHTML = ''; toolopts.append(frag);
+  toolopts.classList.add('show');
 }
 
 /* ========================= шаблоны ========================= */
@@ -1972,7 +2030,7 @@ $('#themeBtn').onclick = () => {
   const dark = cur ? cur === 'dark'
     : matchMedia('(prefers-color-scheme: dark)').matches;
   document.documentElement.setAttribute('data-theme', dark ? 'light' : 'dark');
-  readTheme(); syncCtxbar();
+  readTheme(); syncCtxbar(); syncToolOpts();
 };
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', readTheme);
 
@@ -1980,7 +2038,7 @@ const KEYS = [
   ['Выделение / рука','V / H'], ['Стикер','N'], ['Текст','T'],
   ['Фигуры','R O D G'], ['Стрелка / линия','A / L'], ['Перо','P'],
   ['Рамка / картинка','F / I'], ['Ластик','E'],
-  ['Панорама','колесо · пробел+тяга · 2 пальца'], ['Зум','Ctrl+колесо · щипок'],
+  ['Зум','колесо · щипок · Ctrl+колесо'], ['Панорама','Shift+колесо · пробел+тяга · 2 пальца'],
   ['Показать всё','1'], ['Зум к выделению','2'], ['Масштаб 100%','0'],
   ['Отменить / вернуть','Ctrl+Z / Ctrl+Shift+Z'],
   ['Дублировать','Ctrl+D'], ['Копировать / вставить','Ctrl+C / Ctrl+V'],
